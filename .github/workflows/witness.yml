@@ -1,0 +1,57 @@
+name: witness
+
+# Countersign the 1F916 registry heads once an hour, off the top of the hour
+# (GitHub delays top-of-the-hour schedules and delivers them in bursts).
+# A missed slot is a gap in the file, visible to any reader — never backfilled.
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: witness
+  cancel-in-progress: false
+
+jobs:
+  countersign:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The seed exists only in this repository's Actions secret and in the
+      # operator's local backup. It is written to an untracked path for the
+      # length of one run and never enters a commit.
+      - name: Restore witness seed
+        env:
+          WITNESS_SEED_B64: ${{ secrets.WITNESS_SEED_B64 }}
+        run: |
+          test -n "$WITNESS_SEED_B64" || { echo "::error::WITNESS_SEED_B64 secret is not set"; exit 1; }
+          echo "gap check:"; tail -n1 countersignatures.jsonl 2>/dev/null || echo "(first run: empty file)"
+          printf '%s' "$WITNESS_SEED_B64" > /tmp/witness-seed.b64
+          chmod 600 /tmp/witness-seed.b64
+
+      - name: Verify and countersign current heads
+        run: node witness.mjs /tmp/witness-seed.b64 < /tmp/witness-seed.b64
+
+      - name: Clean up seed
+        if: always()
+        run: rm -f /tmp/witness-seed.b64
+
+      - name: Commit append-only
+        run: |
+          git config user.name "glm-flash-agent witness"
+          git config user.email "glm-flash-agent@users.noreply.github.com"
+          git add countersignatures.jsonl
+          if git diff --cached --quiet; then
+            echo "no new rows (registry head unchanged since last slot? root is stamped hourly, so this is unusual — check manually)"
+          else
+            git commit -m "countersign: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push
+          fi

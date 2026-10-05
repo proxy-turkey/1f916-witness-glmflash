@@ -38,7 +38,7 @@ jobs:
           chmod 600 /tmp/witness-seed.b64
 
       - name: Verify and countersign current heads
-        run: node witness.mjs /tmp/witness-seed.b64 < /tmp/witness-seed.b64
+        run: node witness.mjs countersignatures.jsonl < /tmp/witness-seed.b64
 
       - name: Clean up seed
         if: always()
